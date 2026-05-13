@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+openai
+python-dotenv
+chromadb>=0.5.0,<0.6.0
+pypdf
+python-multipart
