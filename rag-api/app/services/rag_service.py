@@ -19,6 +19,17 @@ def _get_client() -> OpenAI:
 
 
 def answer_question(question: str, doc_id: str | None = None) -> tuple[str, list[dict]]:
+    """Retrieve relevant chunks and answer ``question`` using GPT-4o.
+
+    Args:
+        question: The user's natural-language question.
+        doc_id:   If provided, restricts retrieval to a single document.
+
+    Returns:
+        A ``(answer, chunks)`` tuple.  ``chunks`` are the source passages used
+        to generate the answer, useful for citation display in the UI.
+        Raises ``OpenAIError`` on API failure.
+    """
     query_embedding = embed_query(question)
     retrieved_chunks = query_chunks(query_embedding, doc_id=doc_id)
 

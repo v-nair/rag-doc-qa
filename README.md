@@ -126,6 +126,49 @@ npm run dev
 }
 ```
 
+## Logic — Pseudocode
+
+```text
+// ── UPLOAD ──────────────────────────────────────────────────
+FUNCTION upload_document(pdf_bytes, filename):
+
+    text = extract_text_from_pdf(pdf_bytes)
+
+    chunks = []
+    FOR i in range(0, len(text), CHUNK_SIZE - OVERLAP):
+        chunks.APPEND(text[i : i + CHUNK_SIZE])
+
+    embeddings = OpenAI.embed(chunks)          // text-embedding-3-small
+
+    ChromaDB.store(
+        ids        = [doc_id + "_chunk_0", "_chunk_1", ...],
+        embeddings = embeddings,
+        documents  = chunks,
+        metadata   = [{ filename, doc_id, chunk_index }, ...]
+    )
+
+    RETURN doc_id
+
+
+// ── QUERY ────────────────────────────────────────────────────
+FUNCTION query(question, doc_id=None):
+
+    question_embedding = OpenAI.embed(question)
+
+    top_chunks = ChromaDB.similarity_search(
+        query_embedding = question_embedding,
+        n_results       = 5,
+        where           = { doc_id } IF doc_id ELSE None    // optional filter
+    )
+
+    context = JOIN(top_chunks, separator="\n\n")
+    prompt  = "Answer using only this context:\n{context}\n\nQuestion: {question}"
+
+    answer = OpenAI GPT-4o.complete(prompt)
+
+    RETURN { answer, sources: top_chunks }
+```
+
 ## What This Demonstrates
 
 - **RAG pipeline** — full retrieve-then-generate architecture built from scratch

@@ -1,28 +1,38 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
-from openai import OpenAIError
-from dotenv import load_dotenv
 import logging
 import os
+from contextlib import asynccontextmanager
 
-from models import DocumentResponse, DocumentListItem, QueryRequest, QueryResponse, SourceChunk
+from dotenv import load_dotenv
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from openai import OpenAIError
+
+from models import DocumentListItem, DocumentResponse, QueryRequest, QueryResponse, SourceChunk
 from services.document_service import parse_and_chunk
 from services.embedding_service import embed_texts
-from services.vector_store_service import add_chunks, list_documents, delete_document
 from services.rag_service import answer_question
+from services.vector_store_service import add_chunks, delete_document, list_documents
 
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-if not os.getenv("OPENAI_API_KEY"):
-    raise RuntimeError("OPENAI_API_KEY is not set in environment variables")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if not os.getenv("OPENAI_API_KEY"):
+        raise RuntimeError("OPENAI_API_KEY is not set in environment variables")
+    logger.info("rag-api ready")
+    yield
+    logger.info("Shutting down rag-api")
+
 
 app = FastAPI(
     title="RAG Document Q&A API",
     description="Upload PDFs and ask questions using Retrieval-Augmented Generation",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
