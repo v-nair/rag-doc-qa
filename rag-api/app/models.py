@@ -16,6 +16,7 @@ class DocumentListItem(BaseModel):
 class QueryRequest(BaseModel):
     question: str
     doc_id: str | None = None
+    use_web_search: bool = False
 
     @field_validator("question")
     @classmethod
@@ -30,8 +31,11 @@ class SourceChunk(BaseModel):
     doc_id: str
     filename: str
     chunk_index: int
+    source_type: str = "document"  # "document" | "web"
+    url: str | None = None
 
 
 class QueryResponse(BaseModel):
     answer: str
     sources: list[SourceChunk]
+    web_search_used: bool = False

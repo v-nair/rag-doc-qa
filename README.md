@@ -1,6 +1,6 @@
 # RAG Document Q&A
 
-Upload PDF documents and ask questions about them using Retrieval-Augmented Generation. Built with FastAPI, ChromaDB, OpenAI embeddings, and React.
+Upload **PDF, DOCX, XLSX, CSV, PNG, or JPEG** files and ask questions about them using Retrieval-Augmented Generation. Embedded and standalone images are described with **GPT-4o vision**, and answers can optionally pull in **live web search results** via Tavily. Built with FastAPI, ChromaDB, OpenAI, and React.
 
 ## Architecture
 
@@ -29,7 +29,9 @@ React UI (Vite)        FastAPI Backend           OpenAI              ChromaDB
      │ ◄───────────────────── │                      │                     │
 ```
 
-PDFs are parsed, split into 1000-character chunks with 200-character overlap, embedded via `text-embedding-3-small`, and stored in ChromaDB. Queries embed the question, retrieve the top 5 most similar chunks by cosine similarity, and pass them as context to GPT-4o.
+Files are parsed by extension (PDF → pymupdf, DOCX → python-docx, XLSX → openpyxl, CSV → stdlib, PNG/JPEG → vision). Embedded images inside PDFs and DOCX files plus any standalone uploaded image are sent to GPT-4o vision and the returned descriptions are inlined as text. Everything is then split into 1000-character chunks with 200-character overlap, embedded via `text-embedding-3-small`, and stored in ChromaDB.
+
+Queries embed the question and retrieve the top 5 most similar chunks by cosine similarity. When the **"Include web search"** toggle is on, the question is also sent to Tavily and its top results are merged into the LLM context, clearly labelled.
 
 ## Tech Stack
 
@@ -39,7 +41,12 @@ PDFs are parsed, split into 1000-character chunks with 200-character overlap, em
 | Vector DB | ChromaDB (persistent, Docker named volume) |
 | Embeddings | OpenAI `text-embedding-3-small` |
 | Generation | OpenAI GPT-4o |
-| PDF Parsing | pypdf |
+| Vision | OpenAI GPT-4o (multimodal) |
+| PDF Parsing | PyMuPDF (`fitz`) |
+| DOCX Parsing | python-docx + zipfile |
+| Excel/CSV | openpyxl, stdlib `csv` |
+| Image Handling | Pillow |
+| Web Search | Tavily |
 | Frontend | React 19, Vite, Axios |
 | Infrastructure | Docker, Docker Compose |
 
@@ -73,7 +80,8 @@ rag-doc-qa/
 
 ```bash
 cd rag-api
-cp .env.example .env        # paste your OPENAI_API_KEY
+cp .env.example .env        # paste your OPENAI_API_KEY (required)
+                            # and TAVILY_API_KEY (optional, enables web search)
 docker compose up --build
 ```
 
@@ -95,18 +103,19 @@ npm run dev
 
 | Method | Endpoint | Description |
 | --- | --- | --- |
-| `GET` | `/` | Health check |
-| `POST` | `/documents/upload` | Upload a PDF — parse, chunk, embed, store |
+| `GET` | `/` | Health + advertised supported uploads + web-search availability |
+| `POST` | `/documents/upload` | Upload PDF/DOCX/XLSX/CSV/PNG/JPEG — parse, chunk, embed, store |
 | `GET` | `/documents` | List all uploaded documents |
 | `DELETE` | `/documents/{doc_id}` | Delete a document and all its chunks |
-| `POST` | `/query` | Ask a question, receive an answer with sources |
+| `POST` | `/query` | Ask a question, optionally with web search, receive answer + sources |
 
 **POST /query — request:**
 
 ```json
 {
   "question": "What are the key findings?",
-  "doc_id": "optional-uuid-to-scope-to-one-document"
+  "doc_id": "optional-uuid-to-scope-to-one-document",
+  "use_web_search": false
 }
 ```
 
@@ -115,12 +124,23 @@ npm run dev
 ```json
 {
   "answer": "The key findings are...",
+  "web_search_used": true,
   "sources": [
     {
       "text": "...relevant excerpt...",
       "doc_id": "abc-123",
       "filename": "report.pdf",
-      "chunk_index": 4
+      "chunk_index": 4,
+      "source_type": "document",
+      "url": null
+    },
+    {
+      "text": "...web snippet...",
+      "doc_id": "web",
+      "filename": "Page Title",
+      "chunk_index": 0,
+      "source_type": "web",
+      "url": "https://example.com/article"
     }
   ]
 }
@@ -174,7 +194,9 @@ FUNCTION query(question, doc_id=None):
 - **RAG pipeline** — full retrieve-then-generate architecture built from scratch
 - **Vector embeddings** — OpenAI `text-embedding-3-small`, stored and queried via cosine similarity
 - **ChromaDB** — persistent vector database with metadata filtering per document
-- **PDF processing** — text extraction and fixed-size chunking with overlap
+- **Multi-format ingestion** — PDF, DOCX, XLSX, CSV, PNG, JPEG all funnel into one chunk pipeline
+- **Multimodal extraction** — embedded images inside PDFs/DOCX and standalone images are described via GPT-4o vision and made searchable as text
+- **Hybrid retrieval** — optional Tavily web search merged with vector results, with web sources visibly labelled in the UI
 - **Multi-document support** — query across all documents or scope to one
 - **FastAPI** — async file upload, service layer architecture, Pydantic models
 - **Docker** — named volumes for ChromaDB persistence across container restarts

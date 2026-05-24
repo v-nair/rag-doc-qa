@@ -7,11 +7,13 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAIError
 
+from config import SUPPORTED_EXTENSIONS
 from models import DocumentListItem, DocumentResponse, QueryRequest, QueryResponse, SourceChunk
-from services.document_service import parse_and_chunk
+from services.document_service import UnsupportedFileType, parse_and_chunk
 from services.embedding_service import embed_texts
 from services.rag_service import answer_question
 from services.vector_store_service import add_chunks, delete_document, list_documents
+from services.web_search_service import is_enabled as web_search_enabled
 
 load_dotenv()
 
@@ -46,26 +48,36 @@ app.add_middleware(
 
 @app.get("/", tags=["Health"])
 def root():
-    return {"status": "rag-api is running"}
+    return {
+        "status": "rag-api is running",
+        "supported_uploads": sorted(SUPPORTED_EXTENSIONS),
+        "web_search_enabled": web_search_enabled(),
+    }
 
 
 @app.post("/documents/upload", response_model=DocumentResponse, tags=["Documents"])
 async def upload_document(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type. Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}",
+        )
 
     file_bytes = await file.read()
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
     try:
-        doc_id, chunks = parse_and_chunk(file_bytes)
+        doc_id, chunks = parse_and_chunk(file_bytes, file.filename)
+    except UnsupportedFileType as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"PDF parsing error: {e}")
-        raise HTTPException(status_code=422, detail="Could not parse PDF")
+        logger.error(f"Parse error for {file.filename}: {e}")
+        raise HTTPException(status_code=422, detail=f"Could not parse file: {e}")
 
     if not chunks:
-        raise HTTPException(status_code=422, detail="No text could be extracted from the PDF")
+        raise HTTPException(status_code=422, detail="No content could be extracted from the file")
 
     try:
         embeddings = embed_texts(chunks)
@@ -95,7 +107,11 @@ def remove_document(doc_id: str):
 @app.post("/query", response_model=QueryResponse, tags=["Query"])
 def query(req: QueryRequest):
     try:
-        answer, chunks = answer_question(req.question, req.doc_id)
+        answer, chunks, web_used = answer_question(
+            req.question,
+            doc_id=req.doc_id,
+            use_web_search=req.use_web_search,
+        )
     except OpenAIError:
         raise HTTPException(status_code=502, detail="AI service unavailable")
 
@@ -104,9 +120,11 @@ def query(req: QueryRequest):
             text=chunk["text"][:300],
             doc_id=chunk["metadata"]["doc_id"],
             filename=chunk["metadata"]["filename"],
-            chunk_index=chunk["metadata"]["chunk_index"]
+            chunk_index=chunk["metadata"]["chunk_index"],
+            source_type=chunk["metadata"].get("source_type", "document"),
+            url=chunk["metadata"].get("url"),
         )
         for chunk in chunks
     ]
 
-    return QueryResponse(answer=answer, sources=sources)
+    return QueryResponse(answer=answer, sources=sources, web_search_used=web_used)
